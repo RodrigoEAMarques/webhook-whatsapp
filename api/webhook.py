@@ -1,6 +1,5 @@
-import os
 from flask import Flask, request, Response
-import google.generativeai as genai
+import os
 import requests
 from dotenv import load_dotenv
 
@@ -8,33 +7,60 @@ load_dotenv()
 
 app = Flask(__name__)
 
-# Configurar Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel("gemini-pro")
+# === Função para gerar resposta usando Gemini via API REST ===
+def gerar_resposta_com_gemini(texto_usuario):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={os.getenv('GEMINI_API_KEY')}"
+    
+    headers = {
+        "Content-Type": "application/json"
+    }
 
-@app.route('/api/webhook', methods=['POST'])
-def whatsapp_webhook():
-    incoming_msg = request.form.get('Body')
-    from_number = request.form.get('From')
+    body = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": texto_usuario}
+                ]
+            }
+        ]
+    }
 
-    if not incoming_msg:
-        return Response(status=200)
+    response = requests.post(url, headers=headers, json=body)
 
-    # Gera resposta com Gemini
-    response = model.generate_content(incoming_msg)
-    reply = response.text
+    if response.status_code == 200:
+        try:
+            data = response.json()
+            return data["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError):
+            return "Erro ao interpretar a resposta da Gemini."
+    else:
+        return f"Erro ao chamar a Gemini: {response.status_code} - {response.text}"
 
-    # Envia de volta via Twilio
-    send_whatsapp_message(from_number, reply)
-
-    return Response(status=200)
-
+# === Função para enviar mensagem via Twilio ===
 def send_whatsapp_message(to, body):
     url = f"https://api.twilio.com/2010-04-01/Accounts/{os.getenv('TWILIO_ACCOUNT_SID')}/Messages.json"
     data = {
-        'From': 'whatsapp:+14155238886',
-        'To': to,
-        'Body': body
+        "From": "whatsapp:+14155238886",
+        "To": to,
+        "Body": body
     }
-    auth = (os.getenv('TWILIO_ACCOUNT_SID'), os.getenv('TWILIO_AUTH_TOKEN'))
+    auth = (os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
     requests.post(url, data=data, auth=auth)
+
+# === Rota principal para o webhook ===
+@app.route("/api/webhook", methods=["POST"])
+def webhook():
+    msg = request.form.get("Body")
+    from_number = request.form.get("From")
+
+    if not msg:
+        return Response(status=200)
+
+    reply = gerar_resposta_com_gemini(msg)
+    send_whatsapp_message(from_number, reply)
+    return Response(status=200)
+
+# (Opcional) Rota GET só para teste local
+@app.route("/", methods=["GET"])
+def home():
+    return "Bot rodando localmente com Gemini e Twilio 🚀"
